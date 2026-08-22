@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PoseOutput",
+  "description": "Schema for frame-level raw keypoints and tracking data produced by perception pipeline.",
+  "type": "object",
+  "properties": {
+    "frame_number": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "track_id": {
+            "type": "integer"
+          },
+          "student_id": {
+            "type": "string"
+          },
+          "bbox": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "keypoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "confidence": {
+                  "type": "number"
+                }
+              },
+              "required": ["name", "x", "y", "confidence"]
+            }
+          },
+          "head_pose": {
+            "type": "object",
+            "properties": {
+              "pitch": {
+                "type": "number"
+              },
+              "yaw": {
+                "type": "number"
+              },
+              "roll": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "required": ["track_id", "bbox", "keypoints"]
+      }
+    }
+  },
+  "required": ["frame_number", "tracks"]
+}

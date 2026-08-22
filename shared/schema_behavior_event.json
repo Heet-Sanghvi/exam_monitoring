@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BehaviorEvent",
+  "description": "Schema for behavior events sent from the perception pipeline to the backend API.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Optional unique identifier for the event (e.g. UUID v4)."
+    },
+    "student_id": {
+      "type": "string",
+      "description": "Unique identifier for the student or track ID."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 formatted timestamp when the event occurred."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "looking_away",
+        "head_turn",
+        "body_rotation",
+        "suspicious_hand_movement",
+        "phone_detected",
+        "chit_detected",
+        "multiple_persons_detected",
+        "sustained_absence"
+      ],
+      "description": "Type of monitored behavior or detected anomaly."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence score of the perception model (0.0 to 1.0)."
+    },
+    "risk_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0,
+      "description": "Accumulated or event-specific risk score (0.0 to 100.0)."
+    },
+    "frame_number": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Frame index from the video feed where the behavior was detected."
+    },
+    "bounding_box": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Bounding box coordinates [x_min, y_min, x_max, y_max]."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional context object (e.g. camera_id, duration_seconds, notes)."
+    }
+  },
+  "required": [
+    "student_id",
+    "timestamp",
+    "event_type",
+    "confidence",
+    "risk_score"
+  ]
+}
