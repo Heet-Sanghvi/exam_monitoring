@@ -1,11 +1,19 @@
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.db.database import engine, Base
 from app.routes.events import router as events_router
+from app.routes.tests import router as tests_router
 from app.websocket.manager import manager
 
 # Create database tables automatically
 Base.metadata.create_all(bind=engine)
+
+# Ensure static/snapshots directory exists
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+snapshots_dir = os.path.join(static_dir, "snapshots")
+os.makedirs(snapshots_dir, exist_ok=True)
 
 app = FastAPI(
     title="Exam Monitoring Proctoring API",
@@ -22,7 +30,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 app.include_router(events_router)
+app.include_router(tests_router)
 
 @app.get("/")
 def root():

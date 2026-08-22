@@ -19,6 +19,8 @@ env/
 
 # Generated output
 perception/output/
+backend/static/snapshots/*
+!backend/static/snapshots/.gitkeep
 
 # Database
 *.db

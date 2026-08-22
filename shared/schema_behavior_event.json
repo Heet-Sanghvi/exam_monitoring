@@ -8,9 +8,9 @@
       "type": "string",
       "description": "Optional unique identifier for the event (e.g. UUID v4)."
     },
-    "student_id": {
+    "test_id": {
       "type": "string",
-      "description": "Unique identifier for the student or track ID."
+      "description": "Unique test/exam session identifier."
     },
     "timestamp": {
       "type": "string",
@@ -23,11 +23,11 @@
         "looking_away",
         "head_turn",
         "body_rotation",
-        "suspicious_hand_movement",
+        "hand_out_of_bounds",
+        "body_movement",
         "phone_detected",
         "chit_detected",
-        "multiple_persons_detected",
-        "sustained_absence"
+        "multiple_persons_detected"
       ],
       "description": "Type of monitored behavior or detected anomaly."
     },
@@ -41,7 +41,15 @@
       "type": "number",
       "minimum": 0.0,
       "maximum": 100.0,
-      "description": "Accumulated or event-specific risk score (0.0 to 100.0)."
+      "description": "Calculated risk score (0.0 to 100.0)."
+    },
+    "risk_category": {
+      "type": "string",
+      "enum": [
+        "low",
+        "high"
+      ],
+      "description": "Risk category classification (low or high)."
     },
     "frame_number": {
       "type": "integer",
@@ -55,7 +63,7 @@
       },
       "minItems": 4,
       "maxItems": 4,
-      "description": "Bounding box coordinates [x_min, y_min, x_max, y_max]."
+      "description": "Bounding box coordinates [x, y, width, height]."
     },
     "metadata": {
       "type": "object",
@@ -63,10 +71,13 @@
     }
   },
   "required": [
-    "student_id",
+    "test_id",
+    "frame_number",
     "timestamp",
     "event_type",
     "confidence",
-    "risk_score"
+    "risk_score",
+    "risk_category",
+    "bounding_box"
   ]
 }
