@@ -21,7 +21,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -29,11 +29,12 @@ import requests
 @dataclass
 class EventDispatcherConfig:
     """Configuration for backend communication endpoints."""
-    base_url: str = "http://127.0.0.1:8000"
+    base_url: str = field(default_factory=lambda: os.environ.get("EXAM_BACKEND_URL", "http://127.0.0.1:8000"))
     active_test_endpoint: str = "/tests/active"
     behavior_events_endpoint: str = "/behavior-events"
     default_test_id: str = "test_default"
-    request_timeout_seconds: float = 5.0
+    connect_timeout_seconds: float = 3.0
+    request_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get("EXAM_REQUEST_TIMEOUT", "6.0")))
     offline_fallback_dir: str = "perception/output/offline_events"
 
 
@@ -57,7 +58,7 @@ def convert_bbox_xyxy_to_xywh(bbox_xyxy: List[float]) -> List[float]:
 class EventDispatcher:
     """
     Dispatches flagged behavior events to the backend API.
-    Handles startup test_id discovery and per-event multipart POST.
+    Handles startup test_id discovery, pre-flight connectivity, and per-event multipart POST.
     """
 
     def __init__(self, config: Optional[EventDispatcherConfig] = None):
@@ -67,25 +68,58 @@ class EventDispatcher:
 
         os.makedirs(self.config.offline_fallback_dir, exist_ok=True)
 
+    def check_backend_connectivity(self) -> Tuple[bool, str]:
+        """
+        Perform a fast pre-flight reachability check to verify backend status.
+
+        Returns:
+            Tuple of (is_reachable: bool, message: str)
+        """
+        url = self.config.base_url.rstrip("/") + "/"
+        timeout = (self.config.connect_timeout_seconds, self.config.connect_timeout_seconds)
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    svc_name = data.get("service", "Backend API")
+                    return True, f"Connected to {svc_name} at {self.config.base_url}"
+                except Exception:
+                    return True, f"Connected to backend at {self.config.base_url}"
+            return True, f"Backend reached at {self.config.base_url} (HTTP {resp.status_code})"
+        except requests.exceptions.ConnectionError:
+            return False, f"Connection refused to {self.config.base_url}. Verify Heet's server is running on the host/LAN."
+        except requests.exceptions.Timeout:
+            return False, f"Connection to {self.config.base_url} timed out ({self.config.connect_timeout_seconds}s). Check IP, Wi-Fi network, and firewall."
+        except Exception as exc:
+            return False, f"Cannot reach {self.config.base_url} ({type(exc).__name__}: {exc})"
+
     def fetch_active_test_id(self) -> str:
         """
         Fetch the active test_id from the backend on startup.
         Returns the fetched test_id, or the configured default if backend is unavailable.
         """
         url = self.config.base_url.rstrip("/") + self.config.active_test_endpoint
+        timeout = (self.config.connect_timeout_seconds, self.config.request_timeout_seconds)
         try:
-            resp = requests.get(url, timeout=self.config.request_timeout_seconds)
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 404:
+                self.test_id = self.config.default_test_id
+                self._online = True  # Backend is online, but no session created yet
+                print(f"[EventDispatcher] Backend is online, but no active exam session found (HTTP 404). Using fallback test_id='{self.test_id}'.")
+                return self.test_id
+
             resp.raise_for_status()
             data = resp.json()
             # Accept either {"test_id": "..."} or {"id": "..."} from different backend versions
             fetched_id = data.get("test_id") or data.get("id") or self.config.default_test_id
             self.test_id = str(fetched_id)
             self._online = True
-            print(f"[EventDispatcher] Active test_id fetched: {self.test_id}")
+            print(f"[EventDispatcher] Active test_id fetched: '{self.test_id}'")
         except Exception as exc:
             self.test_id = self.config.default_test_id
             self._online = False
-            print(f"[EventDispatcher] Backend unreachable ({exc}). Using fallback test_id='{self.test_id}'.")
+            print(f"[EventDispatcher] Could not fetch active test_id ({type(exc).__name__}). Using fallback test_id='{self.test_id}'.")
         return self.test_id
 
     def build_event_payload(
@@ -185,7 +219,7 @@ class EventDispatcher:
                     url,
                     data=data,
                     files=files,
-                    timeout=self.config.request_timeout_seconds,
+                    timeout=(self.config.connect_timeout_seconds, self.config.request_timeout_seconds),
                 )
             resp.raise_for_status()
             print(

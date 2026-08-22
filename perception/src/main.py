@@ -40,11 +40,12 @@ class PipelineConfig:
     """Master configuration for the Exam Monitoring Perception Pipeline."""
 
     # Backend API configuration
-    backend_url: str = "http://127.0.0.1:8000"
+    backend_url: str = field(default_factory=lambda: os.environ.get("EXAM_BACKEND_URL", "http://127.0.0.1:8000"))
     active_test_endpoint: str = "/tests/active"
     behavior_events_endpoint: str = "/behavior-events"
     default_test_id: str = "test_default"
-    request_timeout_seconds: float = 4.0
+    connect_timeout_seconds: float = 3.0
+    request_timeout_seconds: float = field(default_factory=lambda: float(os.environ.get("EXAM_REQUEST_TIMEOUT", "6.0")))
 
     # Device & Models
     device: Optional[str] = None
@@ -95,6 +96,7 @@ class PipelineOrchestrator:
             active_test_endpoint=self.config.active_test_endpoint,
             behavior_events_endpoint=self.config.behavior_events_endpoint,
             default_test_id=self.config.default_test_id,
+            connect_timeout_seconds=self.config.connect_timeout_seconds,
             request_timeout_seconds=self.config.request_timeout_seconds,
         )
 
@@ -114,14 +116,28 @@ class PipelineOrchestrator:
     def initialize_backend_session(self) -> str:
         """
         Discover active test session from backend API on pipeline startup.
+        Executes pre-flight health check, followed by session discovery.
         Handles active session, 404 (no active session), and backend-offline gracefully.
         """
-        print(f"[Pipeline] Connecting to backend at {self.config.backend_url}...")
-        self.test_id = self.event_dispatcher.fetch_active_test_id()
-        if self.event_dispatcher._online:
-            print(f"[Pipeline] ✅ Connected! Active exam session: '{self.test_id}'")
+        print(f"[Pipeline] Pre-flight connectivity check to: {self.config.backend_url} ...")
+        reachable, msg = self.event_dispatcher.check_backend_connectivity()
+
+        if reachable:
+            print(f"[Pipeline] ✅ {msg}")
+            self.test_id = self.event_dispatcher.fetch_active_test_id()
+            if self.event_dispatcher._online and self.test_id != self.config.default_test_id:
+                print(f"[Pipeline] ✅ Active exam session discovered: '{self.test_id}'")
+            else:
+                print(f"[Pipeline] ℹ️  Backend reachable, but no active session found. Operating with session ID: '{self.test_id}'")
         else:
-            print(f"[Pipeline] ⚠️  Backend not reachable or no active session. Using local session ID: '{self.test_id}'")
+            self.test_id = self.config.default_test_id
+            print(f"[Pipeline] ⚠️  {msg}")
+            print(f"[Pipeline]    Action items if unexpected:")
+            print(f"      1. Verify Heet's server is running (e.g. uvicorn app.main:app --host 0.0.0.0 --port 8000)")
+            print(f"      2. Verify both laptops are on the same Wi-Fi / LAN hotspot and the IP address is correct.")
+            print(f"      3. Check firewall settings allowing inbound connections on port 8000.")
+            print(f"[Pipeline] -> Continuing in OFFLINE mode (snapshots & events saved locally to {self.config.snapshot_base_dir}).")
+
         return self.test_id
 
     def process_frame(
@@ -375,9 +391,13 @@ class PipelineOrchestrator:
 
 
 def main():
+    default_backend = os.environ.get("EXAM_BACKEND_URL", "http://127.0.0.1:8000")
+    default_timeout = float(os.environ.get("EXAM_REQUEST_TIMEOUT", "6.0"))
+
     parser = argparse.ArgumentParser(description="Exam Monitoring - Perception Pipeline Orchestrator")
     parser.add_argument("--source", type=str, default="0", help="Video file path or camera index (default: 0)")
-    parser.add_argument("--backend-url", type=str, default="http://127.0.0.1:8000", help="Backend API base URL")
+    parser.add_argument("--backend-url", type=str, default=default_backend, help=f"Backend API base URL (default: {default_backend})")
+    parser.add_argument("--timeout", type=float, default=default_timeout, help=f"HTTP request timeout in seconds (default: {default_timeout}s)")
     parser.add_argument("--device", type=str, default=None, help="Compute device ('mps', 'cuda', 'cpu')")
     parser.add_argument("--max-frames", type=int, default=None, help="Maximum frames to process")
     parser.add_argument("--output-video", type=str, default=None, help="Path to save annotated MP4 video")
@@ -388,6 +408,7 @@ def main():
 
     config = PipelineConfig(
         backend_url=args.backend_url,
+        request_timeout_seconds=args.timeout,
         device=args.device,
     )
     orchestrator = PipelineOrchestrator(config=config)

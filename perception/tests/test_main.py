@@ -186,3 +186,39 @@ class TestPipelineOrchestrator:
             assert "bounding_box" in payload
             assert len(payload["bounding_box"]) == 4
             assert payload["risk_category"] in ("low", "high")
+
+    def test_preflight_connectivity_check_clean_messages(self, orchestrator):
+        """Pre-flight check must return clean human-readable status without throwing unhandled errors."""
+        # Case 1: Backend online
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.json.return_value = {"service": "Exam Monitoring Backend", "status": "online"}
+        with patch("src.send_events.requests.get", return_value=mock_resp):
+            reachable, msg = orchestrator.event_dispatcher.check_backend_connectivity()
+            assert reachable is True
+            assert "Connected to Exam Monitoring Backend" in msg
+
+        # Case 2: Connection refused (simulated wrong LAN IP or server not running)
+        import requests
+        with patch("src.send_events.requests.get", side_effect=requests.exceptions.ConnectionError("Connection refused")):
+            reachable, msg = orchestrator.event_dispatcher.check_backend_connectivity()
+            assert reachable is False
+            assert "Connection refused" in msg
+            assert orchestrator.config.backend_url in msg
+
+        # Case 3: Timeout (simulated Wi-Fi drop)
+        with patch("src.send_events.requests.get", side_effect=requests.exceptions.Timeout("Timed out")):
+            reachable, msg = orchestrator.event_dispatcher.check_backend_connectivity()
+            assert reachable is False
+            assert "timed out" in msg
+
+    def test_pipeline_config_env_var_override(self, monkeypatch):
+        """PipelineConfig must support EXAM_BACKEND_URL and EXAM_REQUEST_TIMEOUT env vars."""
+        monkeypatch.setenv("EXAM_BACKEND_URL", "http://192.168.1.155:8000")
+        monkeypatch.setenv("EXAM_REQUEST_TIMEOUT", "9.5")
+
+        config = PipelineConfig()
+        assert config.backend_url == "http://192.168.1.155:8000"
+        assert config.request_timeout_seconds == 9.5
+
