@@ -1,8 +1,13 @@
+import sys
+import os
 import streamlit as st
 import requests
-import pandas as pd
-from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
+
+# Ensure dashboard directory is in python search path for page imports
+DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
+if DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, DASHBOARD_DIR)
 
 st.set_page_config(
     page_title="AI Exam Monitoring & Proctoring Dashboard",
@@ -11,19 +16,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Custom CSS Styling
+# Custom CSS Styling
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.2rem;
+        font-size: 2.0rem;
         font-weight: 700;
         color: #1E293B;
         margin-bottom: 0.2rem;
     }
     .sub-header {
-        font-size: 1.0rem;
+        font-size: 0.95rem;
         color: #64748B;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.2rem;
     }
     .stMetric {
         background-color: #F8FAFC;
@@ -39,33 +44,15 @@ st.markdown("""
 
 API_BASE_URL = "http://127.0.0.1:8000"
 
-def fetch_events(limit=200):
-    try:
-        res = requests.get(f"{API_BASE_URL}/behavior-events?limit={limit}", timeout=3)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
-
-def fetch_risk_scores():
-    try:
-        res = requests.get(f"{API_BASE_URL}/students/risk-scores", timeout=3)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return []
-
 st.sidebar.title("🛡️ Proctoring Portal")
 page = st.sidebar.radio(
     "Navigation",
-    ["🚨 Live Alerts", "📊 Student Risk Scores", "📋 Filterable Event Log"]
+    ["🎓 Test Sessions", "📋 All Behavior Events"]
 )
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔄 Auto-Refresh Controls")
-auto_refresh_enabled = st.sidebar.checkbox("Enable Auto-Refresh", value=True, help="Automatically refresh metrics and alert feed")
+auto_refresh_enabled = st.sidebar.checkbox("Enable Auto-Refresh", value=True, help="Automatically refresh active session events and test list")
 refresh_interval_sec = st.sidebar.slider("Interval (seconds)", min_value=1, max_value=15, value=3, step=1)
 
 if auto_refresh_enabled:
@@ -86,39 +73,53 @@ except Exception:
 
 st.sidebar.markdown("""
 <small style="color: #64748B;">
-AI Proctoring System v1.0<br/>
-Real-time temporal behavior monitoring
+AI Proctoring System v2.0<br/>
+Event-based Snapshot Proctoring
 </small>
 """, unsafe_allow_html=True)
 
 # Top Bar Header
 st.markdown('<div class="main-header">Exam Monitoring & Proctoring Center</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Automated rolling-window behavior anomaly detection & live proctor alerts</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Real-time behavior anomaly detection & snapshot event proctoring</div>', unsafe_allow_html=True)
 
-events = fetch_events()
-risk_scores = fetch_risk_scores()
+# Fetch Top Metrics
+active_session_id = "None"
+total_events_count = 0
+high_risk_count = 0
+sessions_count = 0
+
+try:
+    s_res = requests.get(f"{API_BASE_URL}/tests", timeout=3)
+    if s_res.status_code == 200:
+        sessions = s_res.json()
+        sessions_count = len(sessions)
+        for s in sessions:
+            if s.get("status") == "active":
+                active_session_id = s.get("test_id")
+                break
+except Exception:
+    pass
+
+try:
+    e_res = requests.get(f"{API_BASE_URL}/behavior-events?limit=500", timeout=3)
+    if e_res.status_code == 200:
+        all_events = e_res.json()
+        total_events_count = len(all_events)
+        high_risk_count = sum(1 for e in all_events if e.get("risk_category") == "high")
+except Exception:
+    pass
 
 col1, col2, col3, col4 = st.columns(4)
-high_risk_count = sum(1 for s in risk_scores if s.get("risk_level") == "High")
-medium_risk_count = sum(1 for s in risk_scores if s.get("risk_level") == "Medium")
-
-col1.metric("Total Events Detected", len(events))
-col2.metric("High Risk Students 🚨", high_risk_count)
-col3.metric("Medium Risk Students ⚠️", medium_risk_count)
-col4.metric("Monitored Students 🎓", len(risk_scores))
+col1.metric("Active Session 🎓", active_session_id)
+col2.metric("Total Test Sessions 📋", sessions_count)
+col3.metric("High-Risk Flags 🚨", high_risk_count)
+col4.metric("Total Events Recorded 👁️", total_events_count)
 
 st.markdown("---")
 
-# Import page modules dynamically or route content
-if page == "🚨 Live Alerts":
-    from pages.alerts import render_alerts_page
-    render_alerts_page(events, API_BASE_URL)
-
-elif page == "📊 Student Risk Scores":
-    from pages.risk_scores import render_risk_scores_page
-    render_risk_scores_page(risk_scores)
-
-elif page == "📋 Filterable Event Log":
+if page == "🎓 Test Sessions":
+    from pages.test_sessions import render_test_sessions_view
+    render_test_sessions_view(API_BASE_URL)
+elif page == "📋 All Behavior Events":
     from pages.event_log import render_event_log_page
-    render_event_log_page(events)
-
+    render_event_log_page(all_events if 'all_events' in locals() else [])
