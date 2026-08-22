@@ -109,3 +109,86 @@ def test_risk_score_aggregation_complex():
     assert student_b_summary["latest_risk_score"] == 25.0
     assert student_b_summary["last_seen"] == "2026-08-22T10:04:00Z"
     assert student_b_summary["risk_level"] == "Low"
+
+def test_create_behavior_events_batch_success():
+    payload = {
+        "events": [
+            {
+                "student_id": "student_batch_01",
+                "timestamp": "2026-08-22T11:00:00Z",
+                "event_type": "looking_away",
+                "confidence": 0.85,
+                "risk_score": 30.0
+            },
+            {
+                "student_id": "student_batch_01",
+                "timestamp": "2026-08-22T11:01:00Z",
+                "event_type": "phone_detected",
+                "confidence": 0.95,
+                "risk_score": 80.0
+            },
+            {
+                "student_id": "student_batch_02",
+                "timestamp": "2026-08-22T11:00:30Z",
+                "event_type": "head_turn",
+                "confidence": 0.75,
+                "risk_score": 15.0
+            }
+        ]
+    }
+    response = client.post("/behavior-events/batch", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 3
+    student_ids = {event["student_id"] for event in data}
+    assert student_ids == {"student_batch_01", "student_batch_02"}
+
+def test_create_behavior_events_batch_atomic_rollback():
+    valid_student_id = "student_atomic_01"
+    payload = {
+        "events": [
+            {
+                "student_id": valid_student_id,
+                "timestamp": "2026-08-22T11:05:00Z",
+                "event_type": "looking_away",
+                "confidence": 0.80,
+                "risk_score": 25.0
+            },
+            {
+                "student_id": "student_atomic_02",
+                "timestamp": "2026-08-22T11:05:05Z",
+                "event_type": "phone_detected",
+                "confidence": 1.5,  # Invalid: > 1.0
+                "risk_score": 90.0
+            }
+        ]
+    }
+    response = client.post("/behavior-events/batch", json=payload)
+    assert response.status_code == 422
+
+    # Verify no partial insertion occurred for valid_student_id
+    get_res = client.get(f"/behavior-events?student_id={valid_student_id}")
+    assert get_res.status_code == 200
+    assert len(get_res.json()) == 0
+
+def test_create_behavior_events_batch_empty():
+    payload = {"events": []}
+    response = client.post("/behavior-events/batch", json=payload)
+    assert response.status_code == 422
+
+def test_create_single_behavior_event_after_batch():
+    payload = {
+        "event_id": "test_evt_post_batch",
+        "student_id": "student_post_batch_01",
+        "timestamp": "2026-08-22T11:10:00Z",
+        "event_type": "body_rotation",
+        "confidence": 0.88,
+        "risk_score": 35.0
+    }
+    response = client.post("/behavior-events", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["student_id"] == "student_post_batch_01"
+    assert data["risk_score"] == 35.0
+

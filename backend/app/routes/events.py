@@ -28,6 +28,9 @@ class BehaviorEventResponse(BehaviorEventCreate):
 
     model_config = ConfigDict(from_attributes=True)
 
+class BehaviorEventBatchCreate(BaseModel):
+    events: List[BehaviorEventCreate] = Field(..., min_length=1, description="Non-empty list of behavior events")
+
 @router.post("/behavior-events", response_model=BehaviorEventResponse, status_code=201)
 async def create_behavior_event(event: BehaviorEventCreate, db: Session = Depends(get_db)):
     db_event = BehaviorEventDB(
@@ -74,6 +77,70 @@ async def create_behavior_event(event: BehaviorEventCreate, db: Session = Depend
         metadata=db_event.metadata_json or {},
         created_at=db_event.created_at
     )
+
+@router.post("/behavior-events/batch", response_model=List[BehaviorEventResponse], status_code=201)
+async def create_behavior_events_batch(batch: BehaviorEventBatchCreate, db: Session = Depends(get_db)):
+    # Note: if any event in `batch.events` fails BehaviorEventCreate validation,
+    # FastAPI/Pydantic rejects the whole request with a 422 before this handler
+    # ever runs, so there is no risk of partial insertion from bad payloads.
+    db_events = [
+        BehaviorEventDB(
+            event_id=event.event_id,
+            student_id=event.student_id,
+            timestamp=event.timestamp,
+            event_type=event.event_type,
+            confidence=event.confidence,
+            risk_score=event.risk_score,
+            frame_number=event.frame_number,
+            bounding_box=event.bounding_box,
+            metadata_json=event.metadata,
+        )
+        for event in batch.events
+    ]
+
+    try:
+        db.add_all(db_events)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Batch insertion failed; transaction rolled back")
+
+    for db_event in db_events:
+        db.refresh(db_event)
+
+    responses = []
+    for db_event in db_events:
+        broadcast_payload = {
+            "id": db_event.id,
+            "event_id": db_event.event_id,
+            "student_id": db_event.student_id,
+            "timestamp": db_event.timestamp,
+            "event_type": db_event.event_type,
+            "confidence": db_event.confidence,
+            "risk_score": db_event.risk_score,
+            "frame_number": db_event.frame_number,
+            "bounding_box": db_event.bounding_box,
+            "metadata": db_event.metadata_json,
+            "created_at": db_event.created_at.isoformat() if db_event.created_at else None
+        }
+        await manager.broadcast(broadcast_payload)
+
+        responses.append(BehaviorEventResponse(
+            id=db_event.id,
+            event_id=db_event.event_id,
+            student_id=db_event.student_id,
+            timestamp=db_event.timestamp,
+            event_type=db_event.event_type,
+            confidence=db_event.confidence,
+            risk_score=db_event.risk_score,
+            frame_number=db_event.frame_number,
+            bounding_box=db_event.bounding_box,
+            metadata=db_event.metadata_json or {},
+            created_at=db_event.created_at
+        ))
+
+    return responses
+
 
 @router.get("/behavior-events", response_model=List[BehaviorEventResponse])
 def get_behavior_events(
