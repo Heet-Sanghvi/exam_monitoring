@@ -70,22 +70,15 @@ def render_sessions_list(sessions, api_base_url=API_BASE_URL):
         status_bg = "#DCFCE7" if status == "active" else "#F1F5F9"
         status_label = "🟢 ACTIVE" if status == "active" else "⚪ COMPLETED"
 
+        status_html = f'<span style="background-color: {status_bg}; color: {status_color}; padding: 4px 12px; border-radius: 12px; font-weight: 600; font-size: 0.85rem;">{status_label}</span>'
+
         with st.container():
             col1, col2, col3 = st.columns([3, 2, 1])
             with col1:
                 st.markdown(f"#### 📝 {title}")
                 st.caption(f"ID: `{test_id}` | Started: `{start_time}`")
             with col2:
-                st.markdown(f"""
-                <span style="
-                    background-color: {status_bg};
-                    color: {status_color};
-                    padding: 4px 12px;
-                    border-radius: 12px;
-                    font-weight: 600;
-                    font-size: 0.85rem;
-                ">{status_label}</span>
-                """, unsafe_allow_html=True)
+                st.markdown(status_html, unsafe_allow_html=True)
                 st.caption(f"Ended: `{end_time}`")
             with col3:
                 if st.button("View Events 🔍", key=f"view_{test_id}"):
@@ -167,6 +160,7 @@ def render_event_group(test_id, risk_category, api_base_url=API_BASE_URL):
 
 
 def render_event_card(evt, risk_category, api_base_url=API_BASE_URL):
+    event_db_id = evt.get("id") or evt.get("event_id")
     event_type = evt.get("event_type", "unknown").replace("_", " ").title()
     confidence = evt.get("confidence", 0.0)
     risk_score = evt.get("risk_score", 0.0)
@@ -175,26 +169,24 @@ def render_event_card(evt, risk_category, api_base_url=API_BASE_URL):
     snapshot_path = evt.get("snapshot_path")
     review_status = evt.get("review_status", "unreviewed")
 
-    border_color = "#DC2626" if risk_category == "high" else "#3B82F6"
+    is_high_risk = (risk_category == "high")
+
+    if is_high_risk:
+        card_style = "border: 2px solid #EF4444; border-left: 8px solid #DC2626; background: linear-gradient(135deg, #FEF2F2 0%, #FFF1F2 100%); border-radius: 10px; padding: 14px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.15);"
+        badge_html = '<span style="background-color: #DC2626; color: white; padding: 4px 12px; border-radius: 14px; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.5px;">🚨 HIGH RISK FLAG</span>'
+    else:
+        card_style = "border: 1px solid #E2E8F0; border-left: 4px solid #3B82F6; background-color: #F8FAFC; border-radius: 8px; padding: 12px; margin-bottom: 12px;"
+        badge_html = '<span style="background-color: #3B82F6; color: white; padding: 3px 10px; border-radius: 12px; font-weight: 500; font-size: 0.8rem;">ℹ️ Low Risk</span>'
+
+    card_header_html = f'<div style="{card_style}"><div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;"><h4 style="margin: 0; color: #1E293B;">⚠️ {event_type}</h4>{badge_html}</div><small style="color: #475569; font-weight: 500;">Frame #{frame_num} &nbsp;|&nbsp; Timestamp: {timestamp}</small></div>'
 
     with st.container():
-        st.markdown(f"""
-        <div style="
-            border: 1px solid #E2E8F0;
-            border-left: 5px solid {border_color};
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 12px;
-            background-color: #FFFFFF;
-        ">
-            <h5 style="margin: 0 0 6px 0; color: #1E293B;">⚠️ {event_type}</h5>
-            <small style="color: #64748B;">Frame #{frame_num} | {timestamp}</small>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(card_header_html, unsafe_allow_html=True)
 
         if snapshot_path:
             image_url = f"{api_base_url}{snapshot_path}"
-            st.image(image_url, use_container_width=True, caption=f"Snapshot ({event_type})")
+            caption_prefix = "🚨 High-Risk Anomaly Snapshot" if is_high_risk else "Low-Risk Snapshot"
+            st.image(image_url, use_container_width=True, caption=f"{caption_prefix} ({event_type})")
         else:
             st.warning("No snapshot image attached")
 
@@ -202,7 +194,39 @@ def render_event_card(evt, risk_category, api_base_url=API_BASE_URL):
         col1.metric("Confidence", f"{confidence:.0%}")
         col2.metric("Risk Score", f"{risk_score:.1f}")
 
-        st.caption(f"Review Status: `{review_status}`")
+        # --- Teacher Review Controls ---
+        st.markdown("##### 👩‍🏫 Teacher Review")
+
+        if review_status == "correct":
+            correct_badge_html = '<div style="background-color: #DCFCE7; color: #15803D; padding: 6px 12px; border-radius: 6px; font-weight: bold; margin-bottom: 8px;">✅ Verified Correct Flag</div>'
+            st.markdown(correct_badge_html, unsafe_allow_html=True)
+            if st.button("🔄 Reset Review Status", key=f"reset_{event_db_id}"):
+                update_review_status(api_base_url, event_db_id, "unreviewed")
+        elif review_status == "incorrect":
+            incorrect_badge_html = '<div style="background-color: #FEE2E2; color: #B91C1C; padding: 6px 12px; border-radius: 6px; font-weight: bold; margin-bottom: 8px;">❌ Flagged Incorrect (False Alarm)</div>'
+            st.markdown(incorrect_badge_html, unsafe_allow_html=True)
+            if st.button("🔄 Reset Review Status", key=f"reset_{event_db_id}"):
+                update_review_status(api_base_url, event_db_id, "unreviewed")
+        else:
+            st.caption("Status: `unreviewed`")
+            btn_col1, btn_col2 = st.columns(2)
+            if btn_col1.button("✅ Correct", key=f"correct_{event_db_id}"):
+                update_review_status(api_base_url, event_db_id, "correct")
+            if btn_col2.button("❌ Incorrect", key=f"incorrect_{event_db_id}"):
+                update_review_status(api_base_url, event_db_id, "incorrect")
+
+
+def update_review_status(api_base_url, event_db_id, new_status):
+    try:
+        url = f"{api_base_url}/behavior-events/{event_db_id}"
+        res = requests.patch(url, json={"review_status": new_status}, timeout=5)
+        if res.status_code == 200:
+            st.success(f"Updated review status to '{new_status}'!")
+            st.rerun()
+        else:
+            st.error(f"Failed to update review status (Status {res.status_code}): {res.text}")
+    except Exception as e:
+        st.error(f"Network error updating review status: {e}")
 
 if __name__ == "__main__":
     render_test_sessions_view(API_BASE_URL)
