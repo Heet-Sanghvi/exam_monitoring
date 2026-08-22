@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import jsonschema
 
 # Make sure src is importable from tests/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -455,6 +456,26 @@ class TestEventDispatcher:
             assert test_id == "test_from_backend_99"
             assert dispatcher.test_id == "test_from_backend_99"
 
+    def test_payload_conforms_to_shared_schema(self):
+        """Payload must strictly validate against shared/schema_behavior_event.json."""
+        schema_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared", "schema_behavior_event.json"))
+        with open(schema_path, "r", encoding="utf-8") as f:
+            schema = json.load(f)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dispatcher = self._make_dispatcher(tmp)
+            dispatcher.test_id = "test_session_001"
+            flagged = self._sample_flagged_event()
+            payload = dispatcher.build_event_payload(flagged, frame_number=15)
+
+            # Validates against JSON Schema draft-07
+            jsonschema.validate(instance=payload, schema=schema)
+            assert payload["test_id"] == "test_session_001"
+            assert payload["frame_number"] == 15
+            assert payload["event_type"] == "hand_out_of_bounds"
+            assert len(payload["bounding_box"]) == 4
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
