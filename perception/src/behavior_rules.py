@@ -209,9 +209,11 @@ class MovementFlaggingEngine:
         frame_number: int,
         test_id: str = "test_001",
         timestamp: Optional[str] = None,
+        all_tracks: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[np.ndarray, str]:
         """
-        Draw distinct alert box on the violating student and save snapshot to appropriate risk folder.
+        Draw distinct alert box on the violating student (RED/AMBER) and normal boxes on all
+        other detected students (GREEN), then save snapshot to appropriate risk folder.
 
         Returns:
             Tuple of (annotated_snapshot_frame, saved_snapshot_filepath)
@@ -232,7 +234,36 @@ class MovementFlaggingEngine:
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(w - 1, x2), min(h - 1, y2)
 
-        # Draw Visibly Distinct Alert Box (Bright Crimson / Ruby Red)
+        # 1. Draw Green Bounding Boxes on all other detected students
+        if all_tracks:
+            for tr in all_tracks:
+                tb = tr.get("bbox")
+                if not tb or len(tb) != 4:
+                    continue
+                tx1, ty1, tx2, ty2 = map(int, tb)
+                tx1, ty1 = max(0, tx1), max(0, ty1)
+                tx2, ty2 = min(w - 1, tx2), min(h - 1, ty2)
+
+                # Skip if this is the triggering bounding box (IoU / overlap check)
+                inter_x1 = max(x1, tx1)
+                inter_y1 = max(y1, ty1)
+                inter_x2 = min(x2, tx2)
+                inter_y2 = min(y2, ty2)
+                inter_w = max(0, inter_x2 - inter_x1)
+                inter_h = max(0, inter_y2 - inter_y1)
+                inter_area = inter_w * inter_h
+                box_area = (x2 - x1) * (y2 - y1)
+                if box_area > 0 and (inter_area / box_area) > 0.65:
+                    continue  # This is the triggering student
+
+                # Draw subtle green box on non-violating student
+                cv2.rectangle(snapshot_img, (tx1, ty1), (tx2, ty2), (0, 200, 0), 2)
+                tag_g = "STUDENT"
+                (gtw, gth), _ = cv2.getTextSize(tag_g, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+                cv2.rectangle(snapshot_img, (tx1, max(0, ty1 - gth - 6)), (tx1 + gtw + 6, ty1), (0, 200, 0), -1)
+                cv2.putText(snapshot_img, tag_g, (tx1 + 3, max(gth + 1, ty1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 0, 0), 1, cv2.LINE_AA)
+
+        # 2. Draw Visibly Distinct Alert Box (Bright Crimson / Ruby Red) on Trigger
         alert_color = (0, 0, 255) if risk_cat == "high" else (0, 140, 255)  # Red for high, Amber for low
         # Double rectangle border for visual prominence
         cv2.rectangle(snapshot_img, (x1, y1), (x2, y2), alert_color, 3)
@@ -272,3 +303,4 @@ class MovementFlaggingEngine:
         cv2.imwrite(filepath, snapshot_img)
 
         return snapshot_img, filepath
+
