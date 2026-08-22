@@ -1,6 +1,15 @@
+import sys
+import os
 import streamlit as st
 import pandas as pd
 import requests
+
+# Ensure dashboard directory is in python search path for module imports
+DASHBOARD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, DASHBOARD_DIR)
+
+from utils.live_alerts import render_live_alert_banner
 
 API_BASE_URL = "http://127.0.0.1:8000"
 

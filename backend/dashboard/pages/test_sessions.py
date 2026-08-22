@@ -4,6 +4,13 @@ import streamlit as st
 import requests
 from datetime import datetime
 
+# Ensure dashboard directory is in python search path for module imports
+DASHBOARD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, DASHBOARD_DIR)
+
+from utils.live_alerts import render_live_alert_banner
+
 API_BASE_URL = "http://127.0.0.1:8000"
 
 def render_test_sessions_view(api_base_url=API_BASE_URL):
@@ -92,6 +99,7 @@ def render_session_detail_view(test_id, api_base_url=API_BASE_URL):
     with col_back:
         if st.button("⬅️ Back to List"):
             st.session_state["selected_test_id"] = None
+            st.session_state["jump_to_event_id"] = None
             st.rerun()
 
     with col_title:
@@ -134,6 +142,10 @@ def render_session_detail_view(test_id, api_base_url=API_BASE_URL):
     with tab_low:
         render_event_group(test_id, "low", api_base_url)
 
+    # Clear jump_to_event_id after rendering once
+    if "jump_to_event_id" in st.session_state:
+        st.session_state["jump_to_event_id"] = None
+
 
 def render_event_group(test_id, risk_category, api_base_url=API_BASE_URL):
     try:
@@ -152,14 +164,22 @@ def render_event_group(test_id, risk_category, api_base_url=API_BASE_URL):
 
     st.markdown(f"**Found {len(events)} {risk_category}-risk event(s)**")
 
+    jump_event_id = st.session_state.get("jump_to_event_id")
+
+    # Pin target event to the top if jump_event_id matches
+    pinned_events = [e for e in events if (e.get("id") == jump_event_id or e.get("event_id") == jump_event_id)]
+    other_events = [e for e in events if not (e.get("id") == jump_event_id or e.get("event_id") == jump_event_id)]
+    ordered_events = pinned_events + other_events
+
     # Render events in a grid
     cols = st.columns(2)
-    for idx, evt in enumerate(events):
+    for idx, evt in enumerate(ordered_events):
+        is_target_jump = (evt.get("id") == jump_event_id or evt.get("event_id") == jump_event_id)
         with cols[idx % 2]:
-            render_event_card(evt, risk_category, api_base_url)
+            render_event_card(evt, risk_category, api_base_url, is_target_jump=is_target_jump)
 
 
-def render_event_card(evt, risk_category, api_base_url=API_BASE_URL):
+def render_event_card(evt, risk_category, api_base_url=API_BASE_URL, is_target_jump=False):
     event_db_id = evt.get("id") or evt.get("event_id")
     event_type = evt.get("event_type", "unknown").replace("_", " ").title()
     confidence = evt.get("confidence", 0.0)
@@ -171,7 +191,10 @@ def render_event_card(evt, risk_category, api_base_url=API_BASE_URL):
 
     is_high_risk = (risk_category == "high")
 
-    if is_high_risk:
+    if is_target_jump:
+        card_style = "border: 3px solid #F59E0B; border-left: 10px solid #D97706; background: linear-gradient(135deg, #FEF3C7 0%, #FFFBEB 100%); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);"
+        badge_html = '<span style="background-color: #D97706; color: white; padding: 4px 12px; border-radius: 14px; font-weight: 800; font-size: 0.85rem; letter-spacing: 0.5px;">📌 TARGET JUMP SNAPSHOT</span>'
+    elif is_high_risk:
         card_style = "border: 2px solid #EF4444; border-left: 8px solid #DC2626; background: linear-gradient(135deg, #FEF2F2 0%, #FFF1F2 100%); border-radius: 10px; padding: 14px; margin-bottom: 14px; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.15);"
         badge_html = '<span style="background-color: #DC2626; color: white; padding: 4px 12px; border-radius: 14px; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.5px;">🚨 HIGH RISK FLAG</span>'
     else:

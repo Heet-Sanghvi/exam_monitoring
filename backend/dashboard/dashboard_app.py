@@ -9,12 +9,19 @@ DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
 if DASHBOARD_DIR not in sys.path:
     sys.path.insert(0, DASHBOARD_DIR)
 
+from utils.live_alerts import render_live_alert_banner
+
 st.set_page_config(
     page_title="AI Exam Monitoring & Proctoring Dashboard",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+API_BASE_URL = "http://127.0.0.1:8000"
+
+# Render ambient live alert banner
+render_live_alert_banner(API_BASE_URL)
 
 # Custom CSS Styling
 st.markdown("""
@@ -41,8 +48,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-API_BASE_URL = "http://127.0.0.1:8000"
 
 st.sidebar.title("🛡️ Proctoring Portal")
 page = st.sidebar.radio(
