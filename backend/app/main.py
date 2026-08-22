@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import engine, Base
 from app.routes.events import router as events_router
+from app.routes.tests import router as tests_router
 from app.websocket.manager import manager
 
 # Create database tables automatically
@@ -23,6 +24,7 @@ app.add_middleware(
 )
 
 app.include_router(events_router)
+app.include_router(tests_router)
 
 @app.get("/")
 def root():

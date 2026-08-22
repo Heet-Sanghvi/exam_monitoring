@@ -20,119 +20,133 @@ def test_root_endpoint():
     assert response.status_code == 200
     assert response.json()["status"] == "online"
 
+def test_active_test_session_not_found_initially():
+    response = client.get("/tests/active")
+    assert response.status_code == 404
+    assert "No active test session found" in response.json()["detail"]
+
+def test_start_test_session():
+    payload = {"title": "Midterm Exam Room 101"}
+    response = client.post("/tests/start", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["test_id"].startswith("test_")
+    assert data["title"] == "Midterm Exam Room 101"
+    assert data["status"] == "active"
+    assert data["start_time"] is not None
+    assert data["end_time"] is None
+
+def test_get_active_test_session():
+    response = client.get("/tests/active")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "active"
+    assert data["title"] == "Midterm Exam Room 101"
+
+def test_list_test_sessions():
+    response = client.get("/tests")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    assert data[0]["status"] == "active"
+
+def test_end_test_session():
+    active_res = client.get("/tests/active")
+    assert active_res.status_code == 200
+    test_id = active_res.json()["test_id"]
+
+    response = client.post(f"/tests/{test_id}/end")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["test_id"] == test_id
+    assert data["status"] == "completed"
+    assert data["end_time"] is not None
+
+def test_get_active_test_session_after_ending():
+    response = client.get("/tests/active")
+    assert response.status_code == 404
+
+def test_end_nonexistent_test_session():
+    response = client.post("/tests/nonexistent_test_id/end")
+    assert response.status_code == 404
+
 def test_create_behavior_event():
     payload = {
         "event_id": "test_evt_001",
-        "student_id": "student_test_01",
+        "test_id": "test_session_01",
         "timestamp": "2026-08-22T10:00:00Z",
         "event_type": "looking_away",
         "confidence": 0.95,
         "risk_score": 40.0,
+        "risk_category": "high",
         "frame_number": 100,
-        "bounding_box": [10.0, 20.0, 100.0, 200.0],
+        "bounding_box": [100.0, 150.0, 200.0, 250.0],
+        "snapshot_path": "/snapshots/test_evt_001.jpg",
         "metadata": {"test": True}
     }
     response = client.post("/behavior-events", json=payload)
     assert response.status_code == 201
     data = response.json()
-    assert data["student_id"] == "student_test_01"
-    assert data["risk_score"] == 40.0
+    assert data["test_id"] == "test_session_01"
+    assert data["risk_category"] == "high"
+    assert data["bounding_box"] == [100.0, 150.0, 200.0, 250.0]
     assert data["id"] is not None
 
 def test_invalid_behavior_event_confidence():
     payload = {
-        "student_id": "student_test_02",
+        "test_id": "test_session_01",
         "timestamp": "2026-08-22T10:00:00Z",
         "event_type": "phone_detected",
-        "confidence": 1.5,  # Invalid: > 1.0
-        "risk_score": 85.0
+        "confidence": 1.5,
+        "risk_score": 85.0,
+        "risk_category": "high",
+        "frame_number": 105,
+        "bounding_box": [10.0, 20.0, 30.0, 40.0]
     }
     response = client.post("/behavior-events", json=payload)
-    assert response.status_code == 422  # Validation error
+    assert response.status_code == 422
 
 def test_get_behavior_events():
-    response = client.get("/behavior-events")
+    response = client.get("/behavior-events?test_id=test_session_01")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
     assert len(data) >= 1
-
-def test_get_student_risk_scores_basic():
-    response = client.get("/students/risk-scores")
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
-    assert len(data) >= 1
-    student = next(s for s in data if s["student_id"] == "student_test_01")
-    assert student["risk_level"] == "Medium"
-
-def test_risk_score_aggregation_complex():
-    """
-    Tests:
-    - Multiple events per student
-    - Latest risk score vs max risk score distinction
-    - Correct event count
-    - Risk level threshold classification (High >= 70, Medium >= 35, Low < 35)
-    - Multiple distinct students
-    """
-    # Student A: Event 1 (Medium risk: 40), Event 2 (High risk: 85), Event 3 (Latest event, low risk: 20)
-    events_student_a = [
-        {"student_id": "student_A", "timestamp": "2026-08-22T10:01:00Z", "event_type": "looking_away", "confidence": 0.8, "risk_score": 40.0},
-        {"student_id": "student_A", "timestamp": "2026-08-22T10:02:00Z", "event_type": "phone_detected", "confidence": 0.9, "risk_score": 85.0},
-        {"student_id": "student_A", "timestamp": "2026-08-22T10:03:00Z", "event_type": "head_turn", "confidence": 0.7, "risk_score": 20.0},
-    ]
-
-    # Student B: Event 1 (Low risk: 15), Event 2 (Low risk: 25)
-    events_student_b = [
-        {"student_id": "student_B", "timestamp": "2026-08-22T10:01:00Z", "event_type": "head_turn", "confidence": 0.75, "risk_score": 15.0},
-        {"student_id": "student_B", "timestamp": "2026-08-22T10:04:00Z", "event_type": "head_turn", "confidence": 0.80, "risk_score": 25.0},
-    ]
-
-    for evt in events_student_a + events_student_b:
-        res = client.post("/behavior-events", json=evt)
-        assert res.status_code == 201
-
-    response = client.get("/students/risk-scores")
-    assert response.status_code == 200
-    scores = response.json()
-    
-    student_a_summary = next(s for s in scores if s["student_id"] == "student_A")
-    assert student_a_summary["event_count"] == 3
-    assert student_a_summary["max_risk_score"] == 85.0
-    assert student_a_summary["latest_risk_score"] == 20.0
-    assert student_a_summary["last_seen"] == "2026-08-22T10:03:00Z"
-    assert student_a_summary["risk_level"] == "High"
-
-    student_b_summary = next(s for s in scores if s["student_id"] == "student_B")
-    assert student_b_summary["event_count"] == 2
-    assert student_b_summary["max_risk_score"] == 25.0
-    assert student_b_summary["latest_risk_score"] == 25.0
-    assert student_b_summary["last_seen"] == "2026-08-22T10:04:00Z"
-    assert student_b_summary["risk_level"] == "Low"
+    assert data[0]["test_id"] == "test_session_01"
 
 def test_create_behavior_events_batch_success():
     payload = {
         "events": [
             {
-                "student_id": "student_batch_01",
+                "test_id": "test_batch_01",
                 "timestamp": "2026-08-22T11:00:00Z",
                 "event_type": "looking_away",
                 "confidence": 0.85,
-                "risk_score": 30.0
+                "risk_score": 30.0,
+                "risk_category": "low",
+                "frame_number": 200,
+                "bounding_box": [50.0, 50.0, 100.0, 100.0]
             },
             {
-                "student_id": "student_batch_01",
+                "test_id": "test_batch_01",
                 "timestamp": "2026-08-22T11:01:00Z",
                 "event_type": "phone_detected",
                 "confidence": 0.95,
-                "risk_score": 80.0
+                "risk_score": 80.0,
+                "risk_category": "high",
+                "frame_number": 210,
+                "bounding_box": [60.0, 60.0, 120.0, 120.0]
             },
             {
-                "student_id": "student_batch_02",
+                "test_id": "test_batch_02",
                 "timestamp": "2026-08-22T11:00:30Z",
                 "event_type": "head_turn",
                 "confidence": 0.75,
-                "risk_score": 15.0
+                "risk_score": 15.0,
+                "risk_category": "low",
+                "frame_number": 150,
+                "bounding_box": [70.0, 70.0, 90.0, 90.0]
             }
         ]
     }
@@ -141,34 +155,39 @@ def test_create_behavior_events_batch_success():
     data = response.json()
     assert isinstance(data, list)
     assert len(data) == 3
-    student_ids = {event["student_id"] for event in data}
-    assert student_ids == {"student_batch_01", "student_batch_02"}
+    test_ids = {event["test_id"] for event in data}
+    assert test_ids == {"test_batch_01", "test_batch_02"}
 
 def test_create_behavior_events_batch_atomic_rollback():
-    valid_student_id = "student_atomic_01"
+    target_test_id = "test_atomic_01"
     payload = {
         "events": [
             {
-                "student_id": valid_student_id,
+                "test_id": target_test_id,
                 "timestamp": "2026-08-22T11:05:00Z",
                 "event_type": "looking_away",
                 "confidence": 0.80,
-                "risk_score": 25.0
+                "risk_score": 25.0,
+                "risk_category": "low",
+                "frame_number": 300,
+                "bounding_box": [10.0, 10.0, 50.0, 50.0]
             },
             {
-                "student_id": "student_atomic_02",
+                "test_id": "test_atomic_02",
                 "timestamp": "2026-08-22T11:05:05Z",
                 "event_type": "phone_detected",
-                "confidence": 1.5,  # Invalid: > 1.0
-                "risk_score": 90.0
+                "confidence": 1.5,
+                "risk_score": 90.0,
+                "risk_category": "high",
+                "frame_number": 305,
+                "bounding_box": [20.0, 20.0, 60.0, 60.0]
             }
         ]
     }
     response = client.post("/behavior-events/batch", json=payload)
     assert response.status_code == 422
 
-    # Verify no partial insertion occurred for valid_student_id
-    get_res = client.get(f"/behavior-events?student_id={valid_student_id}")
+    get_res = client.get(f"/behavior-events?test_id={target_test_id}")
     assert get_res.status_code == 200
     assert len(get_res.json()) == 0
 
@@ -180,15 +199,17 @@ def test_create_behavior_events_batch_empty():
 def test_create_single_behavior_event_after_batch():
     payload = {
         "event_id": "test_evt_post_batch",
-        "student_id": "student_post_batch_01",
+        "test_id": "test_post_batch_01",
         "timestamp": "2026-08-22T11:10:00Z",
         "event_type": "body_rotation",
         "confidence": 0.88,
-        "risk_score": 35.0
+        "risk_score": 35.0,
+        "risk_category": "high",
+        "frame_number": 400,
+        "bounding_box": [80.0, 80.0, 150.0, 150.0]
     }
     response = client.post("/behavior-events", json=payload)
     assert response.status_code == 201
     data = response.json()
-    assert data["student_id"] == "student_post_batch_01"
-    assert data["risk_score"] == 35.0
-
+    assert data["test_id"] == "test_post_batch_01"
+    assert data["risk_category"] == "high"
