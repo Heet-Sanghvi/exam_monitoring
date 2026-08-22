@@ -31,6 +31,9 @@ st.markdown("""
         border-radius: 8px;
         border: 1px solid #E2E8F0;
     }
+    .stMetric * {
+        color: #0F172A !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
