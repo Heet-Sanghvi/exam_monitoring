@@ -6,3 +6,4 @@ pydantic>=2.0.0
 pytest>=7.0.0
 scipy>=1.10.0
 lap>=0.5.12
+jsonschema>=4.0.0

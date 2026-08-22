@@ -219,17 +219,66 @@ class TestMovementFlaggingEngine:
         assert result is None
 
     def test_body_movement_flag_triggers(self):
-        """Severe head bending below baseline should trigger body_movement."""
+        """Severe nose drop below baseline should trigger body_movement via Sub-rule A."""
         engine = self._make_engine(body_bend_drop_px=80.0, debounce_frames=5)
         # Register baseline with upright nose
         baseline_track = make_track_dict(nose_y=100.0, shoulder_y=220.0)
         for i in range(6):
             engine.evaluate_track(baseline_track, frame_number=i)
 
-        # Now simulate deep forward bend (nose drops 200px below baseline)
+        # Now simulate deep forward bend (nose drops 200px below baseline → well above 80px threshold)
         bent_track = make_track_dict(nose_y=350.0, shoulder_y=220.0, student_id="student_001")
         result = engine.evaluate_track(bent_track, frame_number=20)
         assert result is not None
+        assert result["event_type"] == "body_movement"
+
+    def test_tilt_without_nose_drop_does_not_flag(self):
+        """
+        Key false-positive guard: a student sitting at an angle with a stationary head
+        (near-zero nose drop) must NOT trigger body_movement, even if tilt >= body_tilt_deg.
+        This is the co-condition that eliminated 497 static-posture false positives.
+        """
+        # body_tilt_min_nose_drop_px=40px means tilt fires only when nose also dropped >=40px
+        engine = self._make_engine(
+            body_tilt_deg=30.0,
+            body_tilt_min_nose_drop_px=40.0,
+            body_bend_drop_px=150.0,  # High enough that drop-only rule won't fire
+            debounce_frames=1,
+        )
+        # Student sitting at a tilted angle but head is stationary (low nose_drop ~0)
+        # shoulder_tilt=60px over 80px span → atan(60/80) ≈ 37° which exceeds body_tilt_deg=30°
+        # But nose_drop is near 0 because there's no baseline (will use shoulder fallback)
+        track = make_track_dict(nose_y=195.0, shoulder_y=200.0, shoulder_tilt=60.0)
+        # nose_y=195, shoulder_mid_y=230 (200+60/2=230) → nose is above shoulders, drop calc near 0
+        result = engine.evaluate_track(track, frame_number=5)
+        assert result is None, (
+            f"Static tilted posture should NOT flag (tilt without meaningful drop). Got: {result}"
+        )
+
+    def test_tilt_with_nose_drop_flags(self):
+        """
+        Real bending motion: tilt + nose drop both present → body_movement MUST fire (Sub-rule B).
+        """
+        engine = self._make_engine(
+            body_tilt_deg=30.0,
+            body_tilt_min_nose_drop_px=30.0,
+            body_bend_drop_px=300.0,  # Very high so drop-only won't trigger alone
+            debounce_frames=5,
+        )
+        # Establish a solid upright baseline first
+        baseline = make_track_dict(nose_y=80.0, shoulder_y=200.0, shoulder_tilt=0.0)
+        for i in range(6):
+            engine.evaluate_track(baseline, frame_number=i)
+
+        # Now simulate real leaning: nose drops 120px (>> 30px co-condition), AND tilt=45°
+        lean_track = make_track_dict(
+            nose_y=220.0,       # 140px below baseline nose_y=80 → drop=140 >= 30
+            shoulder_y=200.0,
+            shoulder_tilt=60.0, # Large tilt, atan(60/80)≈37° > 30° threshold
+            student_id="student_001",
+        )
+        result = engine.evaluate_track(lean_track, frame_number=20)
+        assert result is not None, "Tilt + nose drop should trigger body_movement (Sub-rule B)"
         assert result["event_type"] == "body_movement"
 
     def test_hand_out_of_bounds_flag_triggers(self):

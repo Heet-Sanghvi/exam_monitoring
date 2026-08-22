@@ -31,17 +31,30 @@ from src.behavior_features import (
 @dataclass
 class MovementFlaggingConfig:
     """Configurable threshold parameters for movement anomaly detection."""
+
     # Body Movement Thresholds
-    body_bend_drop_px: float = 65.0       # Vertical nose drop indicating downward bending
-    body_tilt_deg: float = 20.0           # Shoulder tilt deviation from horizontal
-    
+    body_bend_drop_px: float = 65.0
+    """Vertical nose drop (px) from baseline sufficient to flag bending on its own."""
+
+    body_tilt_deg: float = 35.0
+    """Shoulder tilt angle (degrees) from horizontal. Raised from 20° to cut static-posture
+    false positives from wide-angle CCTV where students naturally sit at slight angles.
+    Tilt alone only fires when body_tilt_min_nose_drop_px is also satisfied."""
+
+    body_tilt_min_nose_drop_px: float = 30.0
+    """Minimum nose drop (px) that must co-occur with a tilt event before body_movement is
+    raised. This is the key false-positive guard: a student sitting at an angle with a static
+    head position will have near-zero nose drop and will NOT trigger. A student actually
+    bending forward to reach/copy will have both tilt AND a significant nose drop.
+    Set to 0.0 to disable the co-condition and revert to OR logic."""
+
     # Hand / Wrist Out of Bounds Thresholds
     hand_below_hip_px: float = 25.0       # Wrist extending below hip / desk baseline
     hand_lateral_reach_px: float = 30.0   # Wrist extending laterally out of student envelope
 
     # Risk Scoring Configuration
     high_risk_threshold: float = 60.0     # Score >= threshold produces "high" category, else "low"
-    
+
     # Cooldown & Storage
     debounce_frames: int = 15             # Minimum frames between flags for the same student
     snapshot_base_dir: str = "perception/output/snapshots"
@@ -133,14 +146,30 @@ class MovementFlaggingEngine:
                 severity += min(35.0, (wrist_lateral / self.config.hand_lateral_reach_px) * 30.0)
 
         # 3. Check Body Movement Rule (Bending / Deep Inclination)
-        elif nose_drop >= self.config.body_bend_drop_px or tilt_deg >= self.config.body_tilt_deg:
-            event_type = "body_movement"
-            if nose_drop >= self.config.body_bend_drop_px:
-                reasons.append(f"vertical head drop ({nose_drop:.1f}px >= {self.config.body_bend_drop_px}px)")
-                severity += min(55.0, (nose_drop / self.config.body_bend_drop_px) * 40.0)
-            if tilt_deg >= self.config.body_tilt_deg:
-                reasons.append(f"shoulder tilt ({tilt_deg:.1f}° >= {self.config.body_tilt_deg}°)")
-                severity += min(35.0, (tilt_deg / self.config.body_tilt_deg) * 30.0)
+        #
+        # Sub-rule A: nose_drop alone meets the bend threshold → clear bending forward.
+        # Sub-rule B: tilt meets threshold AND nose has dropped enough to rule out a
+        #             static angled seated posture (body_tilt_min_nose_drop_px co-condition).
+        #             When body_tilt_min_nose_drop_px == 0.0, reverts to pure OR logic.
+        else:
+            tilt_with_drop = (
+                tilt_deg >= self.config.body_tilt_deg
+                and nose_drop >= self.config.body_tilt_min_nose_drop_px
+            )
+            body_flag = nose_drop >= self.config.body_bend_drop_px or tilt_with_drop
+
+            if body_flag:
+                event_type = "body_movement"
+                if nose_drop >= self.config.body_bend_drop_px:
+                    reasons.append(f"vertical head drop ({nose_drop:.1f}px >= {self.config.body_bend_drop_px}px)")
+                    severity += min(55.0, (nose_drop / self.config.body_bend_drop_px) * 40.0)
+                if tilt_with_drop:
+                    reasons.append(
+                        f"shoulder tilt ({tilt_deg:.1f}° >= {self.config.body_tilt_deg}°) "
+                        f"+ nose drop ({nose_drop:.1f}px >= {self.config.body_tilt_min_nose_drop_px}px)"
+                    )
+                    severity += min(35.0, (tilt_deg / self.config.body_tilt_deg) * 30.0)
+
 
         if event_type is None:
             return None
