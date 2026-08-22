@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(
     page_title="AI Exam Monitoring & Proctoring Dashboard",
@@ -60,6 +61,14 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("🔄 Auto-Refresh Controls")
+auto_refresh_enabled = st.sidebar.checkbox("Enable Auto-Refresh", value=True, help="Automatically refresh metrics and alert feed")
+refresh_interval_sec = st.sidebar.slider("Interval (seconds)", min_value=1, max_value=15, value=3, step=1)
+
+if auto_refresh_enabled:
+    st_autorefresh(interval=refresh_interval_sec * 1000, key="proctoring_dashboard_autorefresh")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("System Status")
 
 # System health ping
@@ -109,3 +118,4 @@ elif page == "📊 Student Risk Scores":
 elif page == "📋 Filterable Event Log":
     from pages.event_log import render_event_log_page
     render_event_log_page(events)
+

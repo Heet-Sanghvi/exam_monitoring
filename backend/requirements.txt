@@ -3,6 +3,7 @@ uvicorn[standard]>=0.22.0
 pydantic>=2.0.0
 sqlalchemy>=2.0.0
 streamlit>=1.25.0
+streamlit-autorefresh>=1.0.1
 httpx>=0.24.0
 requests>=2.31.0
 pandas>=2.0.0
