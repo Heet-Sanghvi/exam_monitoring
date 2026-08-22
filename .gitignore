@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+.env.*
+
+# ML model files
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Generated output
+perception/output/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Large video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python cache/testing
+.pytest_cache/
+.mypy_cache/
