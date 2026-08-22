@@ -96,6 +96,7 @@ def test_create_behavior_event_multipart_success():
     data = response.json()
     assert data["test_id"] == "test_session_01"
     assert data["risk_category"] == "high"
+    assert data["review_status"] == "unreviewed"
     assert data["bounding_box"] == [100.0, 150.0, 200.0, 250.0]
     assert data["snapshot_path"].startswith("/static/snapshots/evt_")
     assert data["id"] is not None
@@ -291,3 +292,100 @@ def test_websocket_broadcast_risk_category_filtering():
         get_res = client.get(f"/behavior-events?test_id=test_session_ws&risk_category=low")
         assert get_res.status_code == 200
         assert len(get_res.json()) >= 1
+
+def test_get_test_session_events_and_risk_category_filtering():
+    # 1. Create test session
+    test_res = client.post("/tests/start", json={"title": "Session Events Filter Test"})
+    assert test_res.status_code == 201
+    test_id = test_res.json()["test_id"]
+
+    # 2. Insert high and low risk events for this test_id
+    batch_payload = {
+        "events": [
+            {
+                "test_id": test_id,
+                "timestamp": "2026-08-22T13:00:00Z",
+                "event_type": "looking_away",
+                "confidence": 0.85,
+                "risk_score": 25.0,
+                "risk_category": "low",
+                "frame_number": 700,
+                "bounding_box": [10.0, 10.0, 50.0, 50.0]
+            },
+            {
+                "test_id": test_id,
+                "timestamp": "2026-08-22T13:01:00Z",
+                "event_type": "phone_detected",
+                "confidence": 0.95,
+                "risk_score": 90.0,
+                "risk_category": "high",
+                "frame_number": 710,
+                "bounding_box": [20.0, 20.0, 60.0, 60.0]
+            }
+        ]
+    }
+    batch_res = client.post("/behavior-events/batch", json=batch_payload)
+    assert batch_res.status_code == 201
+
+    # 3. GET /tests/{test_id}/events -> returns all 2 events for test_id
+    events_res = client.get(f"/tests/{test_id}/events")
+    assert events_res.status_code == 200
+    events = events_res.json()
+    assert len(events) == 2
+
+    # 4. GET /tests/{test_id}/events?risk_category=high -> returns 1 high risk event
+    high_res = client.get(f"/tests/{test_id}/events?risk_category=high")
+    assert high_res.status_code == 200
+    high_events = high_res.json()
+    assert len(high_events) == 1
+    assert high_events[0]["risk_category"] == "high"
+
+    # 5. GET /tests/{test_id}/events?risk_category=low -> returns 1 low risk event
+    low_res = client.get(f"/tests/{test_id}/events?risk_category=low")
+    assert low_res.status_code == 200
+    low_events = low_res.json()
+    assert len(low_events) == 1
+    assert low_events[0]["risk_category"] == "low"
+
+    # 6. GET /tests/nonexistent_test_id/events -> returns 404
+    nonexistent_res = client.get("/tests/nonexistent_test_id/events")
+    assert nonexistent_res.status_code == 404
+
+def test_patch_event_review_status():
+    # 1. Create a behavior event
+    payload = {
+        "events": [
+            {
+                "test_id": "test_review_session",
+                "timestamp": "2026-08-22T13:10:00Z",
+                "event_type": "phone_detected",
+                "confidence": 0.90,
+                "risk_score": 85.0,
+                "risk_category": "high",
+                "frame_number": 800,
+                "bounding_box": [10.0, 20.0, 30.0, 40.0]
+            }
+        ]
+    }
+    create_res = client.post("/behavior-events/batch", json=payload)
+    assert create_res.status_code == 201
+    event_id = create_res.json()[0]["id"]
+    assert create_res.json()[0]["review_status"] == "unreviewed"
+
+    # 2. PATCH update to "correct"
+    patch_correct = client.patch(f"/behavior-events/{event_id}", json={"review_status": "correct"})
+    assert patch_correct.status_code == 200
+    assert patch_correct.json()["review_status"] == "correct"
+
+    # 3. PATCH update to "incorrect"
+    patch_incorrect = client.patch(f"/behavior-events/{event_id}", json={"review_status": "incorrect"})
+    assert patch_incorrect.status_code == 200
+    assert patch_incorrect.json()["review_status"] == "incorrect"
+
+    # 4. PATCH invalid review_status -> 422
+    patch_invalid = client.patch(f"/behavior-events/{event_id}", json={"review_status": "maybe"})
+    assert patch_invalid.status_code == 422
+
+    # 5. PATCH nonexistent event -> 404
+    patch_404 = client.patch("/behavior-events/999999", json={"review_status": "correct"})
+    assert patch_404.status_code == 404

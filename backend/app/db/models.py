@@ -32,5 +32,6 @@ class BehaviorEventDB(Base):
     frame_number = Column(Integer, nullable=False)
     bounding_box = Column(JSON, nullable=False)  # [x, y, w, h] format
     snapshot_path = Column(String, nullable=True)
+    review_status = Column(String, nullable=False, default="unreviewed", index=True)  # "unreviewed" | "correct" | "incorrect"
     metadata_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)

@@ -2,7 +2,7 @@ import os
 import uuid
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Form, File, UploadFile, status
-from pydantic import BaseModel, Field, ConfigDict, ValidationError
+from pydantic import BaseModel, Field, ConfigDict, ValidationError, field_validator
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -14,6 +14,7 @@ router = APIRouter()
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/jpg"}
+ALLOWED_REVIEW_STATUSES = {"unreviewed", "correct", "incorrect"}
 
 # Ensure static/snapshots directory exists relative to current file
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -31,6 +32,7 @@ class BehaviorEventCreate(BaseModel):
     frame_number: int = Field(..., ge=0, description="Video frame number")
     bounding_box: List[float] = Field(..., min_length=4, max_length=4, description="Bounding box [x, y, w, h]")
     snapshot_path: Optional[str] = Field(None, description="Path or URL to saved snapshot image")
+    review_status: str = Field(default="unreviewed", description="Teacher review status: 'unreviewed', 'correct', or 'incorrect'")
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 class BehaviorEventResponse(BehaviorEventCreate):
@@ -41,6 +43,16 @@ class BehaviorEventResponse(BehaviorEventCreate):
 
 class BehaviorEventBatchCreate(BaseModel):
     events: List[BehaviorEventCreate] = Field(..., min_length=1, description="Non-empty list of behavior events")
+
+class BehaviorEventReviewUpdate(BaseModel):
+    review_status: str = Field(..., description="Teacher review status: 'unreviewed', 'correct', or 'incorrect'")
+
+    @field_validator("review_status")
+    @classmethod
+    def validate_review_status(cls, v: str) -> str:
+        if v not in ALLOWED_REVIEW_STATUSES:
+            raise ValueError("Invalid review_status. Allowed values: 'unreviewed', 'correct', 'incorrect'")
+        return v
 
 @router.post("/behavior-events", response_model=BehaviorEventResponse, status_code=201)
 async def create_behavior_event(
@@ -106,6 +118,7 @@ async def create_behavior_event(
         frame_number=event_obj.frame_number,
         bounding_box=event_obj.bounding_box,
         snapshot_path=relative_snapshot_url,
+        review_status=event_obj.review_status or "unreviewed",
         metadata_json=event_obj.metadata,
     )
     db.add(db_event)
@@ -124,6 +137,7 @@ async def create_behavior_event(
         "frame_number": db_event.frame_number,
         "bounding_box": db_event.bounding_box,
         "snapshot_path": db_event.snapshot_path,
+        "review_status": db_event.review_status,
         "metadata": db_event.metadata_json,
         "created_at": db_event.created_at.isoformat() if db_event.created_at else None
     }
@@ -144,6 +158,7 @@ async def create_behavior_event(
         frame_number=db_event.frame_number,
         bounding_box=db_event.bounding_box,
         snapshot_path=db_event.snapshot_path,
+        review_status=db_event.review_status,
         metadata=db_event.metadata_json or {},
         created_at=db_event.created_at
     )
@@ -162,6 +177,7 @@ async def create_behavior_events_batch(batch: BehaviorEventBatchCreate, db: Sess
             frame_number=event.frame_number,
             bounding_box=event.bounding_box,
             snapshot_path=event.snapshot_path,
+            review_status=event.review_status or "unreviewed",
             metadata_json=event.metadata,
         )
         for event in batch.events
@@ -191,6 +207,7 @@ async def create_behavior_events_batch(batch: BehaviorEventBatchCreate, db: Sess
             "frame_number": db_event.frame_number,
             "bounding_box": db_event.bounding_box,
             "snapshot_path": db_event.snapshot_path,
+            "review_status": db_event.review_status,
             "metadata": db_event.metadata_json,
             "created_at": db_event.created_at.isoformat() if db_event.created_at else None
         }
@@ -211,11 +228,48 @@ async def create_behavior_events_batch(batch: BehaviorEventBatchCreate, db: Sess
             frame_number=db_event.frame_number,
             bounding_box=db_event.bounding_box,
             snapshot_path=db_event.snapshot_path,
+            review_status=db_event.review_status,
             metadata=db_event.metadata_json or {},
             created_at=db_event.created_at
         ))
 
     return responses
+
+@router.patch("/behavior-events/{event_id}", response_model=BehaviorEventResponse)
+def update_event_review_status(
+    event_id: str,
+    review_in: BehaviorEventReviewUpdate,
+    db: Session = Depends(get_db)
+):
+    db_event = None
+    if event_id.isdigit():
+        db_event = db.query(BehaviorEventDB).filter(BehaviorEventDB.id == int(event_id)).first()
+    if not db_event:
+        db_event = db.query(BehaviorEventDB).filter(BehaviorEventDB.event_id == event_id).first()
+
+    if not db_event:
+        raise HTTPException(status_code=404, detail=f"Behavior event '{event_id}' not found")
+
+    db_event.review_status = review_in.review_status
+    db.commit()
+    db.refresh(db_event)
+
+    return BehaviorEventResponse(
+        id=db_event.id,
+        event_id=db_event.event_id,
+        test_id=db_event.test_id,
+        timestamp=db_event.timestamp,
+        event_type=db_event.event_type,
+        confidence=db_event.confidence,
+        risk_score=db_event.risk_score,
+        risk_category=db_event.risk_category,
+        frame_number=db_event.frame_number,
+        bounding_box=db_event.bounding_box,
+        snapshot_path=db_event.snapshot_path,
+        review_status=db_event.review_status,
+        metadata=db_event.metadata_json or {},
+        created_at=db_event.created_at
+    )
 
 @router.get("/behavior-events", response_model=List[BehaviorEventResponse])
 def get_behavior_events(
@@ -249,6 +303,7 @@ def get_behavior_events(
             frame_number=e.frame_number,
             bounding_box=e.bounding_box,
             snapshot_path=e.snapshot_path,
+            review_status=e.review_status,
             metadata=e.metadata_json or {},
             created_at=e.created_at
         )

@@ -1,12 +1,13 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 
 from app.db.database import get_db
-from app.db.models import TestSessionDB, utc_now
+from app.db.models import TestSessionDB, BehaviorEventDB, utc_now
+from app.routes.events import BehaviorEventResponse
 
 router = APIRouter()
 
@@ -75,6 +76,43 @@ def end_test_session(test_id: str, db: Session = Depends(get_db)):
     db.refresh(session)
 
     return session
+
+@router.get("/tests/{test_id}/events", response_model=List[BehaviorEventResponse])
+def get_test_session_events(
+    test_id: str,
+    risk_category: Optional[str] = Query(None, description="Filter by risk category: 'low' or 'high'"),
+    db: Session = Depends(get_db)
+):
+    session = db.query(TestSessionDB).filter(TestSessionDB.test_id == test_id).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Test session '{test_id}' not found")
+
+    query = db.query(BehaviorEventDB).filter(BehaviorEventDB.test_id == test_id)
+    if risk_category:
+        query = query.filter(BehaviorEventDB.risk_category == risk_category)
+
+    events = query.order_by(BehaviorEventDB.id.desc()).all()
+
+    return [
+        BehaviorEventResponse(
+            id=e.id,
+            event_id=e.event_id,
+            test_id=e.test_id,
+            timestamp=e.timestamp,
+            event_type=e.event_type,
+            confidence=e.confidence,
+            risk_score=e.risk_score,
+            risk_category=e.risk_category,
+            frame_number=e.frame_number,
+            bounding_box=e.bounding_box,
+            snapshot_path=e.snapshot_path,
+            review_status=e.review_status,
+            metadata=e.metadata_json or {},
+            created_at=e.created_at
+        )
+        for e in events
+    ]
 
 @router.get("/tests", response_model=List[TestSessionResponse])
 def list_test_sessions(db: Session = Depends(get_db)):
