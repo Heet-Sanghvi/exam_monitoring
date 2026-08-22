@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime
 
 from app.db.database import get_db
@@ -109,34 +110,49 @@ def get_behavior_events(
 
 @router.get("/students/risk-scores")
 def get_student_risk_scores(db: Session = Depends(get_db)):
-    events = db.query(BehaviorEventDB).all()
-    student_summary: Dict[str, Dict[str, Any]] = {}
+    # Subquery to aggregate max_id, max_risk_score, and event_count per student
+    stats_subquery = (
+        db.query(
+            BehaviorEventDB.student_id.label("student_id"),
+            func.max(BehaviorEventDB.id).label("max_id"),
+            func.max(BehaviorEventDB.risk_score).label("max_risk_score"),
+            func.count(BehaviorEventDB.id).label("event_count")
+        )
+        .group_by(BehaviorEventDB.student_id)
+        .subquery()
+    )
 
-    for e in events:
-        sid = e.student_id
-        if sid not in student_summary:
-            student_summary[sid] = {
-                "student_id": sid,
-                "latest_risk_score": e.risk_score,
-                "max_risk_score": e.risk_score,
-                "event_count": 0,
-                "last_seen": e.timestamp,
-                "risk_level": "Low"
-            }
-        
-        student_summary[sid]["event_count"] += 1
-        student_summary[sid]["latest_risk_score"] = e.risk_score
-        if e.risk_score > student_summary[sid]["max_risk_score"]:
-            student_summary[sid]["max_risk_score"] = e.risk_score
-        student_summary[sid]["last_seen"] = e.timestamp
+    # Join back to get the latest event's risk_score and timestamp for each student
+    results = (
+        db.query(
+            stats_subquery.c.student_id,
+            BehaviorEventDB.risk_score.label("latest_risk_score"),
+            stats_subquery.c.max_risk_score,
+            stats_subquery.c.event_count,
+            BehaviorEventDB.timestamp.label("last_seen")
+        )
+        .join(BehaviorEventDB, BehaviorEventDB.id == stats_subquery.c.max_id)
+        .all()
+    )
 
-    for sid, summary in student_summary.items():
-        score = summary["max_risk_score"]
-        if score >= 70:
-            summary["risk_level"] = "High"
-        elif score >= 35:
-            summary["risk_level"] = "Medium"
+    summaries = []
+    for row in results:
+        max_score = float(row.max_risk_score)
+        if max_score >= 70:
+            risk_level = "High"
+        elif max_score >= 35:
+            risk_level = "Medium"
         else:
-            summary["risk_level"] = "Low"
+            risk_level = "Low"
 
-    return list(student_summary.values())
+        summaries.append({
+            "student_id": row.student_id,
+            "latest_risk_score": float(row.latest_risk_score),
+            "max_risk_score": max_score,
+            "event_count": int(row.event_count),
+            "last_seen": row.last_seen,
+            "risk_level": risk_level
+        })
+
+    return summaries
+

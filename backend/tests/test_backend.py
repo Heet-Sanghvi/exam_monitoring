@@ -57,7 +57,7 @@ def test_get_behavior_events():
     assert isinstance(data, list)
     assert len(data) >= 1
 
-def test_get_student_risk_scores():
+def test_get_student_risk_scores_basic():
     response = client.get("/students/risk-scores")
     assert response.status_code == 200
     data = response.json()
@@ -65,3 +65,47 @@ def test_get_student_risk_scores():
     assert len(data) >= 1
     student = next(s for s in data if s["student_id"] == "student_test_01")
     assert student["risk_level"] == "Medium"
+
+def test_risk_score_aggregation_complex():
+    """
+    Tests:
+    - Multiple events per student
+    - Latest risk score vs max risk score distinction
+    - Correct event count
+    - Risk level threshold classification (High >= 70, Medium >= 35, Low < 35)
+    - Multiple distinct students
+    """
+    # Student A: Event 1 (Medium risk: 40), Event 2 (High risk: 85), Event 3 (Latest event, low risk: 20)
+    events_student_a = [
+        {"student_id": "student_A", "timestamp": "2026-08-22T10:01:00Z", "event_type": "looking_away", "confidence": 0.8, "risk_score": 40.0},
+        {"student_id": "student_A", "timestamp": "2026-08-22T10:02:00Z", "event_type": "phone_detected", "confidence": 0.9, "risk_score": 85.0},
+        {"student_id": "student_A", "timestamp": "2026-08-22T10:03:00Z", "event_type": "head_turn", "confidence": 0.7, "risk_score": 20.0},
+    ]
+
+    # Student B: Event 1 (Low risk: 15), Event 2 (Low risk: 25)
+    events_student_b = [
+        {"student_id": "student_B", "timestamp": "2026-08-22T10:01:00Z", "event_type": "head_turn", "confidence": 0.75, "risk_score": 15.0},
+        {"student_id": "student_B", "timestamp": "2026-08-22T10:04:00Z", "event_type": "head_turn", "confidence": 0.80, "risk_score": 25.0},
+    ]
+
+    for evt in events_student_a + events_student_b:
+        res = client.post("/behavior-events", json=evt)
+        assert res.status_code == 201
+
+    response = client.get("/students/risk-scores")
+    assert response.status_code == 200
+    scores = response.json()
+    
+    student_a_summary = next(s for s in scores if s["student_id"] == "student_A")
+    assert student_a_summary["event_count"] == 3
+    assert student_a_summary["max_risk_score"] == 85.0
+    assert student_a_summary["latest_risk_score"] == 20.0
+    assert student_a_summary["last_seen"] == "2026-08-22T10:03:00Z"
+    assert student_a_summary["risk_level"] == "High"
+
+    student_b_summary = next(s for s in scores if s["student_id"] == "student_B")
+    assert student_b_summary["event_count"] == 2
+    assert student_b_summary["max_risk_score"] == 25.0
+    assert student_b_summary["latest_risk_score"] == 25.0
+    assert student_b_summary["last_seen"] == "2026-08-22T10:04:00Z"
+    assert student_b_summary["risk_level"] == "Low"
